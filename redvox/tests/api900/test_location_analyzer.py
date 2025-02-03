@@ -1,11 +1,12 @@
 """
 Location Analyzer test module
 """
-
-import unittest
 import os
-import pandas as pd
+import unittest
+
 import numpy as np
+import pandas as pd
+
 import redvox.api900.location_analyzer as la
 import redvox.api900.reader as reader
 from redvox.tests import LA_TEST_DATA_DIR

@@ -16,11 +16,16 @@ where h is a height in meters, P(h) is pressure in kPa at h and P0 is sea-level 
 
 Haversine equation constants from site: https://movable-type.co.uk/scripts/gis-faq-5.1.html
 """
-import pandas as pd
-import numpy as np
+import pathlib
 from typing import List, Dict, Optional, Tuple
+
 from fastkml import kml, styles
-from fastkml.geometry import Point
+from fastkml.features import Placemark
+from fastkml.utils import find_all
+import numpy as np
+import pandas as pd
+from pygeoif.geometry import Point as pyPoint
+
 from redvox.api900 import reader
 from redvox.common.constants import (
     EPSILON,
@@ -113,13 +118,13 @@ class DataHolder:
         """
         :return: the mean of the data
         """
-        return np.mean(self._data)
+        return float(np.mean(self._data))
 
     def get_std(self) -> float:
         """
         :return: the standard deviation of the data
         """
-        return np.std(self._data)
+        return float(np.std(self._data))
 
     def get_data(self) -> List[float]:
         """
@@ -160,7 +165,7 @@ class GPSDataHolder:
         sets up the GPSDataHolder
         :param name: string identifier for the data set
         :param opsys: string identifier for the data set's operating system
-        :param data: the data as a list of list of floats, default None
+        :param data: the data as a list of lists of floats, default None
         :param mic_samp_rate_hz: float sample rate of the microphone in hz, default 80 hz
         :param bar: barometer DataHolder, default None
         """
@@ -185,7 +190,7 @@ class GPSDataHolder:
         """
         set gps location data.  data is expected to be 4 lists: latitude values, longitude values, altitude values,
           and accuracy values
-        :param new_data: list of list of floats that represent the gps data, default None
+        :param new_data: list of lists of floats that represent the gps data, default None
         """
         self.gps_df = pd.DataFrame(new_data, index=GPS_DATA_INDICES)
 
@@ -431,7 +436,7 @@ class LocationAnalyzer:
         """
         find the closest valid data point to the real location.  information is stored in the data frames
         """
-        # compute closest point to real location
+        # compute the closest point to real location
         result = compute_distance_all(self._real_location, self.valid_gps_data)
         self.all_stations_closest_df = result[CLOSEST_TO_SURVEY_COLUMNS]
         self.all_stations_info_df = result[STATION_INFO_COLUMNS]
@@ -853,7 +858,7 @@ def compute_distance(point: dict, gps_data: GPSDataHolder) -> dict:
     :param gps_data: the data points to compute distance from
     :return: dictionary containing all information about the gps points' distance to the chosen point
     """
-    # for a location, compute distance to closest data point
+    # for a location, compute distance to the closest data point
     idd = gps_data.id
     stations_data = {idd: None}
     gps_loc = gps_data.get_mean_all()
@@ -875,7 +880,7 @@ def compute_distance(point: dict, gps_data: GPSDataHolder) -> dict:
     # for all gps coords, find closest to solution
     dist_array = get_gps_dist_to_location(point, gps_data)
     min_index = np.argmin(dist_array)
-    # compute distance using best barometer measurement
+    # compute distance using the best barometer measurement
     dist_array_bar = get_gps_dist_to_location(point, gps_data, bar_alt)
     min_bar_index = np.argmin(dist_array_bar)
     # compare minimum of pure gps and gps with barometer
@@ -921,11 +926,8 @@ def load_kml(kml_file: str) -> Dict[str, Dict[str, float]]:
     :param kml_file: full path of the file to load data from
     :return: dictionary of locations with identifiers
     """
-    with open(kml_file, "r", encoding="utf-8") as my_file:
-        kml_doc = my_file.read()
-    kml_data = kml.KML()
-    kml_data.from_string(bytes(kml_doc, encoding="utf8"))
-    locations = list(list(kml_data.features())[0].features())
+    kml_data = kml.KML.parse(kml_file)
+    locations: list[Placemark] = list(find_all(kml_data, of_type=Placemark))
     set_locations = {}
     for place in locations:
         set_locations[place.name] = {"lon": place.geometry.x, "lat": place.geometry.y, "alt": place.geometry.z}
@@ -941,28 +943,27 @@ def write_kml(kml_file: str, master_dict: Dict[str, Dict[str, float]]):
     ns = "{http://www.opengis.net/kml/2.2}"
     # declare kml structure and the document
     kmlz = kml.KML(ns=ns)
-    doc = kml.Document(ns, "1")
     # declare, then add styles to doc
-    doc_style = styles.Style(id="2")
-    pnt_style = styles.IconStyle(id="3", color="ff0000ff")
-    pnt_style.icon_href = "http://maps.google.com/mapfiles/kml/shapes/placemark_circle.png"
-    doc_style.append_style(pnt_style)
-    doc.append_style(doc_style)
+    pnt_style = styles.IconStyle(id="is3", color="ff0000ff",
+                                 icon_href="http://maps.google.com/mapfiles/kml/shapes/placemark_circle.png")
+    doc_style = styles.Style(id="s2", styles=[pnt_style])
+    doc = kml.Document(ns, id="d1", styles=[doc_style])
     # id is assigned dynamically as new elements are created
     new_id = 4
     for key in master_dict.keys():
-        # how do we know if bar is better than alt?
+        # todo: how do we know if bar is better than alt?
         # set point description to os and sample rate
         description = "{} {}hz".format(master_dict[key]["os"], str(master_dict[key]["sample rate"]))
         # declare the placemark, then give it some coordinates
-        pnt = kml.Placemark(ns, id=str(new_id), name=key, description=description, styleUrl="#2")
+        new_point = pyPoint(x=master_dict[key]["mean lon"],
+                            y=master_dict[key]["mean lat"],
+                            z=master_dict[key]["mean alt"])
+        pnt = kml.Placemark(ns, id=str(f"p{new_id}"), name=key, description=description,
+                            style_url=styles.StyleUrl(url="#s2"), geometry=new_point)
         new_id += 1
-        pnt.geometry = Point(master_dict[key]["mean lon"], master_dict[key]["mean lat"], master_dict[key]["mean alt"])
         # add placemark to doc
         doc.append(pnt)
     # add the doc to the kml file
     kmlz.append(doc)
     # write the kml file, with nice formatting
-    with open(kml_file, "w", encoding="utf-8") as my_file:
-        my_file.write('<?xml version="1.0" encoding="UTF-8"?>\n')
-        my_file.write(kmlz.to_string(prettyprint=True))
+    kmlz.write(pathlib.Path(kml_file), precision=5, prettyprint=True)
