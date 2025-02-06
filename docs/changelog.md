@@ -1,5 +1,8 @@
 ## Changelog
 
+### 3.8.7 (2024-02-06)
+* Updated dependencies with consideration for future proofing
+
 ### 3.8.6 (2024-07-09)
 * Updated dependencies for cython, dataclasses-json, numpy, pandas, protobuf, psutil, pyarrow, pyserde, requests, 
   scipy, websocket-client and matplotlib
